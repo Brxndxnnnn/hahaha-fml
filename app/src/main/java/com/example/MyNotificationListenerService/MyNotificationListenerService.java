@@ -10,10 +10,15 @@ import android.bluetooth.BluetoothGattService;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
+import android.content.Intent;
+import android.os.Handler;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 import android.util.Log;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.UUID;
 
 public class MyNotificationListenerService extends NotificationListenerService {
@@ -24,12 +29,15 @@ public class MyNotificationListenerService extends NotificationListenerService {
     private final BluetoothLeScanner bluetoothLeScanner;
     private BluetoothGatt bluetoothGatt;
     private BluetoothGattCharacteristic writeCharacteristic;
-    private String targetDeviceName = "BlueNRG"; // Replace with your BLE device name
-
+//    private String targetDeviceName = "BlueNRG"; // Replace with your BLE device name
+    private boolean isConnected = false;
+    private final Handler connectionHandler = new Handler();
 
     // UUIDs for the service and characteristic on your BLE device
     private static final UUID SERVICE_UUID = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
     private static final UUID CHARACTERISTIC_UUID = UUID.fromString("6e400002-b5a3-f393-e0a9-e50e24dcca9e");
+
+    List<String> APP_LIST = Arrays.asList("Whatsapp", "Telegram", "Instagram");
 
     public MyNotificationListenerService() {
         bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
@@ -39,9 +47,19 @@ public class MyNotificationListenerService extends NotificationListenerService {
     @Override
     public void onCreate() {
         super.onCreate();
-        if (writeCharacteristic == null && bluetoothGatt == null) {
-            initializeBLEConnection(); // Connect to BLE when the service starts
-        }
+        startConnectionRetry();
+    }
+
+    private void startConnectionRetry() {
+        connectionHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (!isConnected) {
+                    initializeBLEConnection();
+                    connectionHandler.postDelayed(this, 10000); // Retry every 10 seconds
+                }
+            }
+        }, 10000);
     }
 
     @SuppressLint("MissingPermission")
@@ -56,7 +74,7 @@ public class MyNotificationListenerService extends NotificationListenerService {
         public void onScanResult(int callbackType, ScanResult result) {
             BluetoothDevice device = result.getDevice();
             Log.d("Brandon", "Found device: " + device.getName() + ", " + device.getAddress());
-            if (device.getName() != null && device.getName().equals(targetDeviceName) && device.getAddress().equals("E4:22:9C:C9:20:BA")) {
+            if (device.getAddress().equals("E4:22:9C:C9:20:BA")) {
                 bluetoothLeScanner.stopScan(scanCallback);
                 bluetoothGatt = device.connectGatt(null, true, gattCallback);
                 Log.d("Brandon", "Connecting to device: " + device.getName() + ", " + device.getAddress());
@@ -70,10 +88,15 @@ public class MyNotificationListenerService extends NotificationListenerService {
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
             if (newState == BluetoothGatt.STATE_CONNECTED) {
                 Log.d(TAG, "Connected to GATT server.");
+                String deviceName = gatt.getDevice().getName(); // Get the connected device name
+                isConnected = true;
+                sendBLEStatusBroadcast(true, deviceName);
                 bluetoothGatt = gatt;
                 bluetoothGatt.discoverServices(); // Start service discovery
             } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
                 Log.d(TAG, "Disconnected from GATT server.");
+                isConnected = false;
+                sendBLEStatusBroadcast(false, null);
                 bluetoothGatt = null;
             }
         }
@@ -89,7 +112,14 @@ public class MyNotificationListenerService extends NotificationListenerService {
         }
     };
 
-    @Override
+    private void sendBLEStatusBroadcast(boolean connected, String deviceName) {
+        Intent intent = new Intent("com.example.MyNotificationListenerService.BLE_STATUS");
+        intent.putExtra("connected", connected);
+        intent.putExtra("deviceName", deviceName);
+        sendBroadcast(intent);
+    }
+
+        @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
         String packageName = sbn.getPackageName();
         String title = sbn.getNotification().extras.getString("android.title");
@@ -99,8 +129,10 @@ public class MyNotificationListenerService extends NotificationListenerService {
         Log.d(TAG, "Title: " + title); // Return Sender Name
         Log.d(TAG, "Text: " + text); // Return Message Content + sometimes ## new messages
 
-        if (title != null && text != null) {
-            String message = title + ":\n" + text;
+        String app_name = getApplicationName(packageName);
+
+        if (title != null && text != null && filterNotifications(app_name, title, text)) {
+            String message = app_name + ":" + title + ":" + text;
             sendNotificationDataOverBLE(message); // Send the notification data to the BLE device
         }
     }
@@ -122,5 +154,21 @@ public class MyNotificationListenerService extends NotificationListenerService {
     @Override
     public void onNotificationRemoved(StatusBarNotification sbn) {
         Log.d(TAG, "Notification Removed: " + sbn.getPackageName());
+    }
+
+    public String getApplicationName(String packageName) {
+        for (String appName : APP_LIST) {
+            if (packageName.toLowerCase().contains(appName.toLowerCase())) {
+                return appName;
+            }
+        }
+        return "INVALID";
+    }
+
+    // Return true if notification is OK to send out
+    public Boolean filterNotifications(String appName, String sender, String text) {
+       if (appName == "INVALID") return false; // NOT registered app, dont send notif
+       else if (text == "Checking for new messages") return false; // Some whatsapp checks, dont send
+       else return true;
     }
 }

@@ -1,6 +1,9 @@
 package com.example.MyNotificationListenerService;
 
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -13,7 +16,6 @@ public class MainActivity extends AppCompatActivity {
 
     // Initialises variables
     private TextView notificationTextView;
-    BluetoothHelper bluetoothHelper = new BluetoothHelper();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -27,14 +29,29 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
         notificationTextView = findViewById(R.id.notificationTextView);
 
-        // Start scanning for BLE devices (our Tiny ST BLE)
-//        bluetoothHelper.startScan();
+        // Register receiver for BLE connection status
+        IntentFilter filter = new IntentFilter("com.example.MyNotificationListenerService.BLE_STATUS");
+        registerReceiver(bleStatusReceiver, filter);
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
     }
+
+    // Receiver to listen for connection status updates
+    private final BroadcastReceiver bleStatusReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            boolean isConnected = intent.getBooleanExtra("connected", false);
+            String deviceName = intent.getStringExtra("deviceName");
+            if (isConnected) {
+                notificationTextView.setText("Connected to BLE: " + deviceName);
+            } else {
+                notificationTextView.setText("Disconnected from BLE");
+            }
+        }
+    };
 
     public void openNotificationAccessSettings() {
         Intent intent = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
